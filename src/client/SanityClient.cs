@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using Olav.Sanity.Client.Extensions;
 using Olav.Sanity.Client.Mutators;
 
 namespace Olav.Sanity.Client
@@ -63,15 +64,21 @@ namespace Olav.Sanity.Client
                 _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
         }
 
+        [Obsolete("Use GetDocumentAsync method instead.")]
+        public virtual Task<(HttpStatusCode, DocumentResult<T>)> GetDocument<T>(string id) where T : class
+        {
+            return GetDocumentAsync<T>(id);
+        }
+
         /// <summary>
         /// Get a single document by id
         /// </summary>
         /// <param name="id">Document id</param>
         /// <returns>Tuple of HttpStatusCode and a T wrapped in a DocumentResult</returns>
-        public virtual async Task<(HttpStatusCode, DocumentResult<T>)> GetDocument<T>(string id) where T : class
+        public virtual async Task<(HttpStatusCode, DocumentResult<T>)> GetDocumentAsync<T>(string id) where T : class
         {
-            var message = await _httpClient.GetAsync($"doc/{_dataset}/{id}");
-            return await ResponseToResult<DocumentResult<T>>(message);
+            var message = await _httpClient.GetAsync($"doc/{_dataset}/{id}").ConfigureAwait(false);
+            return await ResponseToResult<DocumentResult<T>>(message).ConfigureAwait(false);
         }
 
         private async Task<(HttpStatusCode, T)> ResponseToResult<T>(HttpResponseMessage message) where T : class
@@ -80,40 +87,80 @@ namespace Olav.Sanity.Client
             {
                 return (message.StatusCode, null);
             }
-            var content = await message.Content.ReadAsStringAsync();
+            var content = await message.Content.ReadAsStringAsync().ConfigureAwait(false);
 
             return (message.StatusCode, JsonConvert.DeserializeObject<T>(content));
         }
 
         private async Task<(HttpStatusCode, T)> FetchResultToResult<T, V>(HttpResponseMessage message, bool excludeDrafts)
                 where T : FetchResult<V>
-                where V : ISanityDoc
         {
             if (!message.IsSuccessStatusCode)
             {
                 return (message.StatusCode, null);
             }
-            var content = await message.Content.ReadAsStringAsync();
+            var content = await message.Content.ReadAsStringAsync().ConfigureAwait(false);
 
             var result = JsonConvert.DeserializeObject<T>(content);
             result.Result = excludeDrafts ?
-                                result.Result.Where(doc => !doc.Id.StartsWith("drafts.")).ToArray() :
+                                result.Result.Where(doc => !doc.IsDraftDocument()).ToArray() :
                                 result.Result;
 
             return (message.StatusCode, result);
         }
 
+        [Obsolete("Use GetDocumentsAsync or QueryAsync method instead.")]
+        public virtual Task<(HttpStatusCode, FetchResult<T>)> Fetch<T>(string query, bool excludeDrafts = true)
+        {
+            return GetDocumentsAsync<T>(query, excludeDrafts);
+        }
+
         /// <summary>
-        /// Fetch documents using a GROQ query
+        /// Fetch an array of documents using a GROQ query
         /// </summary>
         /// <param name="query">GROQ query</param>
         /// <param name="excludeDrafts">set to false if unpublished documents should be included in the result</param>
         /// <returns>Tuple of HttpStatusCode and T's wrapped in a FetchResult</returns>
-        public virtual async Task<(HttpStatusCode, FetchResult<T>)> Fetch<T>(string query, bool excludeDrafts = true) where T : ISanityDoc
+        public virtual async Task<(HttpStatusCode, FetchResult<T>)> GetDocumentsAsync<T>(string query, bool excludeDrafts = true)
         {
             var encodedQ = System.Net.WebUtility.UrlEncode(query);
-            var message = await _httpClient.GetAsync($"query/{_dataset}?query={encodedQ}");
-            return await FetchResultToResult<FetchResult<T>, T>(message, excludeDrafts);
+            var message = await _httpClient.GetAsync($"query/{_dataset}?query={encodedQ}").ConfigureAwait(false);
+            return await FetchResultToResult<FetchResult<T>, T>(message, excludeDrafts).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Fetch an arbitrary query result using a GROQ query. This can be used where the response is not necessarily 
+        /// expected to be an array of documents. Typical examples include aggregate queries such as count() or queries for a single property or document.
+        /// </summary>
+        /// <param name="query">GROQ query</param>
+        /// <returns>Tuple of HttpStatusCode and T's wrapped in a FetchResult</returns>
+        public virtual async Task<(HttpStatusCode, QueryResult<T>)> QueryAsync<T>(string query)
+        {
+            var encodedQ = System.Net.WebUtility.UrlEncode(query);
+            var message = await _httpClient.GetAsync($"query/{_dataset}?query={encodedQ}").ConfigureAwait(false);
+            return await QueryResultToResult<QueryResult<T>, T>(message, false).ConfigureAwait(false);
+        }
+
+        private async Task<(HttpStatusCode, T)> QueryResultToResult<T, V>(HttpResponseMessage message, bool excludeDrafts)
+        where T : QueryResult<V>
+        {
+            if (!message.IsSuccessStatusCode)
+            {
+                return (message.StatusCode, null);
+            }
+            var content = await message.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            var result = JsonConvert.DeserializeObject<T>(content);
+
+            return (message.StatusCode, result);
+        }
+
+        [Obsolete("Use MutateAsync method instead.")]
+        public virtual Task<(HttpStatusCode, MutationResult)> Mutate(
+            Mutations mutations, bool returnIds = false, bool returnDocuments = false,
+            Visibility visibility = Visibility.Sync)
+        {
+            return MutateAsync(mutations, returnIds, returnDocuments, visibility);
         }
 
         /// <summary>
@@ -123,15 +170,15 @@ namespace Olav.Sanity.Client
         /// <param name="returnIds">If true, the id's of modified documents are returned</param>
         /// <param name="returnDocuments">If true, the entire content of changed documents is returned</param>
         /// <param name="visibility">If "sync" the request will not return until the requested changes are visible to subsequent queries, if "async" the request will return immediately when the changes have been committed. For maximum performance, use "async" always, except when you need your next query to see the changes you made. "deferred" is used in cases where you are adding or mutating a large number of documents and don't need them to be immediately available.</param>
-        public virtual async Task<(HttpStatusCode, MutationResult)> Mutate(
+        public virtual async Task<(HttpStatusCode, MutationResult)> MutateAsync(
             Mutations mutations, bool returnIds = false, bool returnDocuments = false,
             Visibility visibility = Visibility.Sync)
         {
             var json = mutations.Serialize();
             var content = new StringContent(json);
             var url = $"mutate/{_dataset}?returnIds={returnIds.ToString().ToLower()}&returnDocuments={returnDocuments.ToString().ToLower()}&visibility={visibility.ToString().ToLower()}";
-            var message = await _httpClient.PostAsync(url, content);
-            return await ResponseToResult<MutationResult>(message);
+            var message = await _httpClient.PostAsync(url, content).ConfigureAwait(false);
+            return await ResponseToResult<MutationResult>(message).ConfigureAwait(false);
         }
 
         public void Dispose()
