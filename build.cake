@@ -12,7 +12,7 @@ var artifactsDirectory = Directory("./artifacts");
 var isAppVeyor          = AppVeyor.IsRunningOnAppVeyor;
 var version             = AppVeyor.IsRunningOnAppVeyor ?
                              "0.0." + AppVeyor.Environment.Build.Number :
-                             "0.0.11.001"; 
+                             "0.0.12.001"; 
 
 ///////////////////////////////////////////////////////////////////////////////
 // Clean
