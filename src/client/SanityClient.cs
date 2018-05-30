@@ -86,28 +86,23 @@ namespace Olav.Sanity.Client
             return (message.StatusCode, JsonConvert.DeserializeObject<T>(content));
         }
 
-        [Obsolete("Use GetDocuments method instead.")]
-        public virtual Task<(HttpStatusCode, FetchResult<T>)> Fetch<T>(string query, bool excludeDrafts = true)
-        {
-            return GetDocuments<T>(query, excludeDrafts);
-        }
-
         /// <summary>
-        /// Fetch an array of documents using a GROQ query
+        /// Execute a GROQ query and return the result as an array of documents
         /// </summary>
         /// <param name="query">GROQ query</param>
-        /// <param name="excludeDrafts">set to false if unpublished documents should be included in the result</param>
-        /// <returns>Tuple of HttpStatusCode and T's wrapped in a FetchResult</returns>
-        public virtual async Task<(HttpStatusCode, FetchResult<T>)> GetDocuments<T>(string query, bool excludeDrafts = true)
+        /// <param name="excludeDrafts">set to false if unpublished documents should be included in the result, consider to filter
+        ///     result using GROQ for efficiency if there may be a significant number of documents in draft state
+        /// </param>
+        /// <returns>Tuple of HttpStatusCode and T's wrapped in a QueryResult</returns>
+        public virtual async Task<(HttpStatusCode, QueryResult<T[]>)> Query<T>(string query, bool excludeDrafts = true)
         {
             var encodedQ = System.Net.WebUtility.UrlEncode(query);
             var message = await _httpClient.GetAsync($"query/{_dataset}?query={encodedQ}").ConfigureAwait(false);
-            return await FetchResultToResult<FetchResult<T>, T>(message, excludeDrafts).ConfigureAwait(false);
+            return await QueryResultToResult<QueryResult<T[]>, T>(message, excludeDrafts).ConfigureAwait(false);
         }
 
-        
-        private async Task<(HttpStatusCode, T)> FetchResultToResult<T, V>(HttpResponseMessage message, bool excludeDrafts)
-                where T : FetchResult<V>
+        private async Task<(HttpStatusCode, T)> QueryResultToResult<T, V>(HttpResponseMessage message, bool excludeDrafts)
+        where T : QueryResult<V[]>
         {
             if (!message.IsSuccessStatusCode)
             {
@@ -124,26 +119,26 @@ namespace Olav.Sanity.Client
         }
 
         /// <summary>
-        /// Fetch an arbitrary query result using a GROQ query. This can be used where the response is not necessarily 
-        /// expected to be an array of documents. Typical examples include aggregate queries such as count() or queries for a single property or document.
+        /// Fetch an object result using a GROQ query. This may be used if the response is known to not be an
+        /// array. Typical examples include aggregate queries such as count().
         /// </summary>
         /// <param name="query">GROQ query</param>
-        /// <returns>Tuple of HttpStatusCode and T's wrapped in a FetchResult</returns>
-        public virtual async Task<(HttpStatusCode, QueryResult<T>)> Query<T>(string query)
+        /// <returns>Tuple of HttpStatusCode and a T wrapped in a QueryResult</returns>
+        public virtual async Task<(HttpStatusCode, QueryResult<T>)> QuerySingle<T>(string query)
         {
             var encodedQ = System.Net.WebUtility.UrlEncode(query);
             var message = await _httpClient.GetAsync($"query/{_dataset}?query={encodedQ}").ConfigureAwait(false);
-            return await QueryResultToResult<QueryResult<T>, T>(message, false).ConfigureAwait(false);
+            return await QueryResultToResult<QueryResult<T>, T>(message).ConfigureAwait(false);
         }
 
-        private async Task<(HttpStatusCode, T)> QueryResultToResult<T, V>(HttpResponseMessage message, bool excludeDrafts)
+        private async Task<(HttpStatusCode, T)> QueryResultToResult<T, V>(HttpResponseMessage message)
         where T : QueryResult<V>
         {
             if (!message.IsSuccessStatusCode)
             {
                 return (message.StatusCode, null);
             }
-            var content = await message.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var content = await message.Content.ReadAsStringAsync();
 
             var result = JsonConvert.DeserializeObject<T>(content);
 
